@@ -16,24 +16,21 @@ function updateDisplay() {
             if (data.timestamp) {
                 document.getElementById('last-updated').textContent = 'Last Updated: ' + formatDateTime(data.timestamp);
             }
+            updateTimeElapsed();
         })
         .catch(err => console.error('Error fetching data:', err));
 }
 
-// Update every 5 seconds
-setInterval(updateDisplay, 5000);
+// Initial data load
 updateDisplay();
-// Initial chart load
 updateChart();
 updateSessionInfo();
-// Refresh chart every 5 minutes
-setInterval(updateChart, 300000);
 
 // Global start date
 let sessionStartDate = null;
 
 // Update elapsed time every second
-setInterval(updateTimeElapsed, 1000);
+// setInterval(updateTimeElapsed, 1000);
 
 function formatDateTime(dateStr) {
     if (!dateStr) return '--';
@@ -245,6 +242,7 @@ function updateSessionInfo() {
                 }
 
                 document.getElementById('session-date').textContent = visibleDate;
+                updateTimeElapsed();
             }
         })
         .catch(err => console.error('Error loading session info:', err));

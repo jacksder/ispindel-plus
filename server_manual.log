@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/home/classy/Documents/Code/iSpindel-plus/server/server.py", line 230, in <module>
+    with socketserver.TCPServer(("", PORT), ISpindelHandler) as httpd:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/socketserver.py", line 457, in __init__
+    self.server_bind()
+  File "/usr/lib/python3.12/socketserver.py", line 473, in server_bind
+    self.socket.bind(self.server_address)
+OSError: [Errno 98] Address already in use
