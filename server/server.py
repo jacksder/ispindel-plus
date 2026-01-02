@@ -13,6 +13,45 @@ CSV_FILE = os.path.join(DATA_DIR, 'measurements.csv')
 # Global variable to store the latest reading
 latest_reading = {}
 
+def load_latest_from_csv():
+    global latest_reading
+    try:
+        if not os.path.exists(CSV_FILE):
+            return
+
+        with open(CSV_FILE, 'r') as f:
+            reader = csv.reader(f)
+            header = next(reader, None)  # Skip header
+            if not header:
+                return
+            
+            # Read all remaining lines
+            rows = list(reader)
+            if rows:
+                last_row = rows[-1]
+                # Map CSV columns back to dict keys
+                # Header: Timestamp,Name,ID,Angle,Temperature,Temp_Units,Battery,Gravity,Interval,RSSI
+                
+                try:
+                    latest_reading = {
+                        'timestamp': last_row[0],
+                        'name': last_row[1],
+                        'ID': last_row[2],
+                        'angle': float(last_row[3]),
+                        'temperature': float(last_row[4]),
+                        'temp_units': last_row[5],
+                        'battery': float(last_row[6]),
+                        'gravity': float(last_row[7]),
+                        'interval': int(last_row[8]),
+                        'RSSI': int(last_row[9])
+                    }
+                    print(f"Loaded latest data from CSV: {latest_reading.get('name')} at {latest_reading.get('timestamp')}")
+                except (IndexError, ValueError) as e:
+                    print(f"Error parsing last CSV row: {e}")
+            
+    except Exception as e:
+        print(f"Error loading CSV history: {e}")
+
 class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/latest':
@@ -20,11 +59,36 @@ class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(latest_reading).encode('utf-8'))
+        elif self.path == '/api/session':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            if os.path.exists(SESSION_FILE):
+                with open(SESSION_FILE, 'r') as f:
+                    self.wfile.write(f.read().encode('utf-8'))
+            else:
+                self.wfile.write(b'{}')
+        elif self.path == '/api/history':
+            try:
+                history = []
+                if os.path.exists(CSV_FILE):
+                    with open(CSV_FILE, 'r') as f:
+                        reader = csv.DictReader(f)
+                        history = list(reader)
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(history).encode('utf-8'))
+            except Exception as e:
+                print(f"Error serving history: {e}")
+                self.send_error(500)
         else:
             # Default behavior serves static files
             super().do_GET()
 
     def do_POST(self):
+        global latest_reading
         if self.path == '/api/data':
             try:
                 content_length = int(self.headers['Content-Length'])
@@ -70,6 +134,47 @@ class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
                 print(f"Error processing POST: {e}")
                 self.send_response(500)
                 self.end_headers()
+        elif self.path == '/api/new_session':
+            try:
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                data = json.loads(post_data.decode('utf-8'))
+                
+                session_name = data.get('sessionName', 'Unnamed')
+                # Sanitize filename
+                safe_name = "".join([c for c in session_name if c.isalpha() or c.isdigit() or c==' ' or c=='_']).rstrip()
+                
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                archive_name = f"archive_{timestamp}_{safe_name}.csv"
+                archive_path = os.path.join(DATA_DIR, archive_name)
+                
+                # Archive current file
+                if os.path.exists(CSV_FILE):
+                    os.rename(CSV_FILE, archive_path)
+                    print(f"Archived current session to {archive_name}")
+                
+                # Update session metadata
+                session_info = {
+                    "name": session_name,
+                    "start_date": timestamp
+                }
+                with open(SESSION_FILE, 'w') as f:
+                    json.dump(session_info, f)
+
+                # Create new blank file
+                with open(CSV_FILE, 'w', newline='') as f:
+                    f.write('Timestamp,Name,ID,Angle,Temperature,Temp_Units,Battery,Gravity,Interval,RSSI\n')
+                
+                # Reset memory
+                latest_reading = {}
+                
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"message": "New session started"}')
+            except Exception as e:
+                print(f"Error starting new session: {e}")
+                self.send_error(500)
         else:
             self.send_error(404)
 
@@ -111,6 +216,7 @@ if __name__ == "__main__":
 
     # Update global constants to be absolute since we are changing CWD
     CSV_FILE = abs_csv_file
+    SESSION_FILE = os.path.join(abs_data_dir, 'session.json')
     
     # Change to public directory to serve files easily
     public_dir = os.path.join(abs_root, 'public')
@@ -125,6 +231,10 @@ if __name__ == "__main__":
         print(f"Serving at port {PORT}")
         print(f"Serving files from {public_dir}")
         print(f"Writing data to {CSV_FILE}")
+        
+        # Load previous state
+        load_latest_from_csv()
+        
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
