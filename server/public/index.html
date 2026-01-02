@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iSpindel Monitor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>iSpindel Monitor</h1>
+            <div id="last-updated">Waiting for data...</div>
+        </header>
+
+        <div class="cards">
+            <div class="card gravity-card">
+                <h2>Gravity</h2>
+                <div class="value" id="gravity">--</div>
+                <div class="unit">SG</div>
+            </div>
+
+            <div class="card temp-card">
+                <h2>Temperature</h2>
+                <div class="value" id="temperature">--</div>
+                <div class="unit" id="temp-unit">°C</div>
+            </div>
+
+            <div class="card battery-card">
+                <h2>Battery</h2>
+                <div class="value" id="battery">--</div>
+                <div class="unit">V</div>
+            </div>
+
+            <div class="card angle-card">
+                <h2>Angle</h2>
+                <div class="value" id="angle">--</div>
+                <div class="unit">°</div>
+            </div>
+        </div>
+
+        <div class="details">
+            <p>Device Name: <span id="device-name">--</span></p>
+            <p>Signal Strength (RSSI): <span id="rssi">--</span> dBm</p>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
