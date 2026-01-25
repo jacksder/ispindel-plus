@@ -5,13 +5,124 @@ import csv
 import os
 import datetime
 from datetime import datetime
+import math
 
 PORT = 3000
 DATA_DIR = '../data'
 CSV_FILE = os.path.join(DATA_DIR, 'measurements.csv')
+CALIBRATION_FILE = os.path.join(DATA_DIR, 'measurements_tilt_gravity.csv')
+SESSION_FILE = os.path.join(DATA_DIR, 'session.json')
 
 # Global variable to store the latest reading
 latest_reading = {}
+
+# Polynomial coefficients for gravity calculation (default to 0)
+gravity_coeffs = []
+
+def poly_fit(x, y, degree):
+    """
+    Fits a polynomial of given degree to data points (x, y) using Least Squares.
+    Returns coefficients [beta_0, beta_1, ..., beta_degree] for y = b0 + b1*x + ...
+    """
+    n = len(x)
+    if n <= degree:
+        return [] # Not enough points
+
+    # Create Vandermonde matrix X
+    X = [[0.0] * (degree + 1) for _ in range(n)]
+    for i in range(n):
+        for j in range(degree + 1):
+            X[i][j] = x[i] ** j
+
+    # Transpose of X
+    XT = [[X[i][j] for i in range(n)] for j in range(degree + 1)]
+
+    # Compute XT * X (Normal matrix)
+    XTX = [[0.0] * (degree + 1) for _ in range(degree + 1)]
+    for i in range(degree + 1):
+        for j in range(degree + 1):
+            val = 0.0
+            for k in range(n):
+                val += XT[i][k] * X[k][j]
+            XTX[i][j] = val
+
+    # Compute XT * y
+    XTy = [0.0] * (degree + 1)
+    for i in range(degree + 1):
+        val = 0.0
+        for k in range(n):
+            val += XT[i][k] * y[k]
+        XTy[i] = val
+
+    # Solve XTX * beta = XTy using Gaussian elimination
+    # Augmented matrix [XTX | XTy]
+    aug = [row[:] + [XTy[i]] for i, row in enumerate(XTX)]
+    
+    # Forward elimination
+    for i in range(degree + 1):
+        # Pivot
+        pivot = aug[i][i]
+        if abs(pivot) < 1e-10:
+            return [] # Singular matrix
+            
+        for j in range(i + 1, degree + 2):
+            aug[i][j] /= pivot
+        aug[i][i] = 1.0
+
+        for k in range(i + 1, degree + 1):
+            factor = aug[k][i]
+            for j in range(i, degree + 2):
+                aug[k][j] -= factor * aug[i][j]
+
+    # Back substitution
+    coeffs = [0.0] * (degree + 1)
+    for i in range(degree, -1, -1):
+        val = aug[i][degree + 1]
+        for j in range(i + 1, degree + 1):
+            val -= aug[i][j] * coeffs[j]
+        coeffs[i] = val
+        
+    return coeffs
+
+def calculate_gravity(tilt):
+    global gravity_coeffs
+    if not gravity_coeffs:
+        return 0.0
+    
+    gravity = 0.0
+    for i, coeff in enumerate(gravity_coeffs):
+        gravity += coeff * (tilt ** i)
+    return gravity
+
+def load_calibration():
+    global gravity_coeffs
+    try:
+        points_x = []
+        points_y = []
+        
+        if os.path.exists(CALIBRATION_FILE):
+            with open(CALIBRATION_FILE, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        t = float(row['tilt'])
+                        g = float(row['gravity'])
+                        points_x.append(t)
+                        points_y.append(g)
+                    except ValueError:
+                        continue
+        
+        if len(points_x) > 2:
+            # Fit a quadratic (degree 2) or cubic (degree 3) if enough points
+            degree = 2 if len(points_x) < 5 else 3
+            gravity_coeffs = poly_fit(points_x, points_y, degree)
+            print(f"Calibration loaded. Coeffs: {gravity_coeffs}")
+        else:
+            print("Not enough calibration points to fit function.")
+            gravity_coeffs = []
+            
+    except Exception as e:
+        print(f"Error loading calibration: {e}")
 
 def load_latest_from_csv():
     global latest_reading
@@ -29,9 +140,6 @@ def load_latest_from_csv():
             rows = list(reader)
             if rows:
                 last_row = rows[-1]
-                # Map CSV columns back to dict keys
-                # Header: Timestamp,Name,ID,Angle,Temperature,Temp_Units,Battery,Gravity,Interval,RSSI
-                
                 try:
                     latest_reading = {
                         'timestamp': last_row[0],
@@ -83,6 +191,24 @@ class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as e:
                 print(f"Error serving history: {e}")
                 self.send_error(500)
+        elif self.path == '/api/calibration':
+            try:
+                data = {
+                    'coeffs': gravity_coeffs,
+                    'points': []
+                }
+                if os.path.exists(CALIBRATION_FILE):
+                    with open(CALIBRATION_FILE, 'r') as f:
+                        reader = csv.DictReader(f)
+                        data['points'] = list(reader)
+                        
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode('utf-8'))
+            except Exception as e:
+                print(f"Error serving calibration: {e}")
+                self.send_error(500)
         else:
             # Default behavior serves static files
             super().do_GET()
@@ -111,14 +237,19 @@ class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
                 temperature = data.get('temperature', 0)
                 temp_units = data.get('temp_units', 'C')
                 battery = data.get('battery', 0)
-                gravity = data.get('gravity', 0)
                 interval = data.get('interval', 0)
                 rssi = data.get('RSSI', 0)
                 
-                # Write to CSV
-                # Ensure directory exists (relative to where we are running, which will be 'public')
-                # But we are referencing via '../data' so it should be fine if we are in public
+                # Calculate gravity from tilt if calibration exists
+                calculated_gravity = data.get('gravity', 0)
+                if gravity_coeffs:
+                    calculated_gravity = calculate_gravity(angle)
+                    latest_reading['gravity'] = calculated_gravity
+                    print(f"Calculated gravity {calculated_gravity:.4f} from angle {angle}")
                 
+                gravity = calculated_gravity
+                
+                # Write to CSV
                 row = [timestamp, name, id_val, angle, temperature, temp_units, battery, gravity, interval, rssi]
                 
                 with open(CSV_FILE, 'a', newline='') as f:
@@ -141,19 +272,16 @@ class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
                 data = json.loads(post_data.decode('utf-8'))
                 
                 session_name = data.get('sessionName', 'Unnamed')
-                # Sanitize filename
                 safe_name = "".join([c for c in session_name if c.isalpha() or c.isdigit() or c==' ' or c=='_']).rstrip()
                 
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 archive_name = f"archive_{timestamp}_{safe_name}.csv"
                 archive_path = os.path.join(DATA_DIR, archive_name)
                 
-                # Archive current file
                 if os.path.exists(CSV_FILE):
                     os.rename(CSV_FILE, archive_path)
                     print(f"Archived current session to {archive_name}")
                 
-                # Update session metadata
                 session_info = {
                     "name": session_name,
                     "start_date": timestamp
@@ -161,11 +289,9 @@ class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
                 with open(SESSION_FILE, 'w') as f:
                     json.dump(session_info, f)
 
-                # Create new blank file
                 with open(CSV_FILE, 'w', newline='') as f:
                     f.write('Timestamp,Name,ID,Angle,Temperature,Temp_Units,Battery,Gravity,Interval,RSSI\n')
                 
-                # Reset memory
                 latest_reading = {}
                 
                 self.send_response(200)
@@ -179,15 +305,6 @@ class ISpindelHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
 def ensure_setup():
-    # We will run from the root directory but change to public for serving
-    # So we need to set up data dir relative to public or absolute
-    # Let's rely on the structure being:
-    # /root
-    #   /data
-    #   /public
-    #   server.py
-    
-    # Actually, the logic below assumes we start in root, create data, then chdir to public.
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
         
@@ -196,13 +313,6 @@ def ensure_setup():
             f.write('Timestamp,Name,ID,Angle,Temperature,Temp_Units,Battery,Gravity,Interval,RSSI\n')
 
 if __name__ == "__main__":
-    # Ensure data directory exists before changing CWD
-    # DATA_DIR is '../data' assuming we are inside 'public'.
-    # But currently we are at root.
-    
-    # Let's correct the paths.
-    # We start at /playground/final-sun/
-    
     abs_root = os.getcwd()
     abs_data_dir = os.path.join(abs_root, 'data')
     abs_csv_file = os.path.join(abs_data_dir, 'measurements.csv')
@@ -214,17 +324,18 @@ if __name__ == "__main__":
         with open(abs_csv_file, 'w', newline='') as f:
             f.write('Timestamp,Name,ID,Angle,Temperature,Temp_Units,Battery,Gravity,Interval,RSSI\n')
 
-    # Update global constants to be absolute since we are changing CWD
     CSV_FILE = abs_csv_file
+    CALIBRATION_FILE = os.path.join(abs_data_dir, 'measurements_tilt_gravity.csv')
     SESSION_FILE = os.path.join(abs_data_dir, 'session.json')
     
-    # Change to public directory to serve files easily
+    # Load calibration data
+    load_calibration()
+    
     public_dir = os.path.join(abs_root, 'public')
     if not os.path.exists(public_dir):
         os.makedirs(public_dir)
     os.chdir(public_dir)
     
-    # Allow address reuse to prevent "Address already in use" errors during quick restarts
     socketserver.TCPServer.allow_reuse_address = True
     
     with socketserver.TCPServer(("", PORT), ISpindelHandler) as httpd:
@@ -232,7 +343,6 @@ if __name__ == "__main__":
         print(f"Serving files from {public_dir}")
         print(f"Writing data to {CSV_FILE}")
         
-        # Load previous state
         load_latest_from_csv()
         
         try:

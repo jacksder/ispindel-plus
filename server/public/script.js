@@ -24,6 +24,7 @@ function updateDisplay() {
 // Initial data load
 updateDisplay();
 updateChart();
+updateCalibrationChart();
 updateSessionInfo();
 
 // Global start date
@@ -62,6 +63,82 @@ function updateTimeElapsed() {
     document.getElementById('session-elapsed').textContent = `${days}d ${hours}h ${minutes}m ${seconds}s`;
 }
 
+function updateCalibrationChart() {
+    fetch('/api/calibration')
+        .then(response => response.json())
+        .then(data => {
+            if (!data || !data.points || data.points.length === 0) return;
+
+            const pointsX = data.points.map(d => parseFloat(d.tilt));
+            const pointsY = data.points.map(d => parseFloat(d.gravity));
+            const coeffs = data.coeffs;
+
+            // Chart 3: Calibration
+            const tracePoints = {
+                x: pointsX,
+                y: pointsY,
+                name: 'Measurements',
+                type: 'scatter',
+                mode: 'markers',
+                marker: { symbol: 'cross', size: 10, color: '#e74c3c' }
+            };
+
+            const plotData = [tracePoints];
+
+            // Generate curve if we have coefficients
+            if (coeffs && coeffs.length > 0) {
+                const minX = Math.min(...pointsX) - 5;
+                const maxX = Math.max(...pointsX) + 5;
+                const step = (maxX - minX) / 100;
+
+                const curveX = [];
+                const curveY = [];
+
+                for (let x = minX; x <= maxX; x += step) {
+                    let y = 0;
+                    for (let i = 0; i < coeffs.length; i++) {
+                        y += coeffs[i] * Math.pow(x, i);
+                    }
+                    curveX.push(x);
+                    curveY.push(y);
+                }
+
+                const traceCurve = {
+                    x: curveX,
+                    y: curveY,
+                    name: 'Fitted Function',
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: { shape: 'spline', color: '#3498db', width: 2 }
+                };
+                plotData.push(traceCurve);
+            }
+
+            const layout = {
+                title: 'Gravity Calibration (Tilt vs SG)',
+                paper_bgcolor: '#2d2d2d',
+                plot_bgcolor: '#2d2d2d',
+                font: { color: '#e0e0e0' },
+                hovermode: 'closest',
+                xaxis: { title: 'Tilt (Angle)', gridcolor: '#444' },
+                yaxis: {
+                    title: 'Specific Gravity',
+                    gridcolor: '#444'
+                },
+                showlegend: true,
+                legend: {
+                    x: 0.5,
+                    y: 1.1,
+                    orientation: 'h',
+                    xanchor: 'center'
+                }
+            };
+
+            Plotly.newPlot('calibration-chart', plotData, layout);
+        })
+        .catch(err => console.error('Error loading calibration chart:', err));
+}
+
 function updateChart() {
     fetch('/api/history')
         .then(response => response.json())
@@ -82,7 +159,7 @@ function updateChart() {
                 type: 'scatter',
                 mode: 'lines+markers',
                 marker: { symbol: 'diamond', size: 6 },
-                line: { shape: 'spline', color: '#e67e22' }
+                line: { shape: 'spline', color: '#e67e22' } // Matches --accent-gravity
             };
 
             const trace2 = {
@@ -93,7 +170,7 @@ function updateChart() {
                 type: 'scatter',
                 mode: 'lines+markers',
                 marker: { symbol: 'diamond', size: 6 },
-                line: { shape: 'spline', color: '#e74c3c' }
+                line: { shape: 'spline', color: '#e74c3c' } // Matches --accent-temp
             };
 
             const layout = {
@@ -132,7 +209,7 @@ function updateChart() {
                 type: 'scatter',
                 mode: 'lines+markers',
                 marker: { symbol: 'circle', size: 6 },
-                line: { shape: 'spline', color: '#3498db' }
+                line: { shape: 'spline', color: '#2ecc71' } // Matches --accent-battery
             };
 
             const trace4 = {
@@ -143,7 +220,7 @@ function updateChart() {
                 type: 'scatter',
                 mode: 'lines+markers',
                 marker: { symbol: 'circle', size: 6 },
-                line: { shape: 'spline', color: '#9b59b6' }
+                line: { shape: 'spline', color: '#e0e0e0' } // Matches text color since Angle card has no accent
             };
 
             const layout2 = {
